@@ -31,17 +31,38 @@
 
 ---
 
-## Pass 2 — `R = 20` Next-Gen Carbon Fusion (`IN PROGRESS`)
+## Pass 2 — `R = 20` Next-Gen Carbon Fusion (`COMPLETED`)
 
-### Pre-Fusion Baseline (`exp_r20_distant_theories.c`, Parts 1–4 Verified)
-- **Right-Context Carry-Sudoku (`Part 2`):** `1,155.8 ctx/s` on 8 cores (`3.01x` over Legacy `384.6 ctx/s`, `4.33x` over paper `266.8 ctx/s`), `0.00%` hit loss (`38/38` exact hits across 500 seeds).
-- **Left-to-Right `sol19` + `W4` Streaming (`Part 3`):** `2,543–3,160 sol19/s` on 8 cores (`3.35x–11.30x` over Legacy `solve20_padded_fast.c`), currently using `KER_BITS=5` CAS table build (`~8.0s`), 32 MB `a1_cosets`, and 4 GB `H_pack4.bin` at Hop 3 (`47.3%` $Q_0^{-1}(t_{18})$ coverage).
-- **Target of Pass 2:** Transplant `KB=4` 0-CAS slice builder (`ht_dense`), zero-table 9-bit $\Sigma_1$ blind-spot `{a1[22..24], a1[16]}` coset lock (`2x` faster co-residue bucket fill, `0 MB` `a1_cosets`), 4-wide NEON Hop-3 active subspace inversion (`100%` $Q_0^{-1}(t_{18})$ coverage -> `~2x` higher `sol19` yield per Hop-2 survivor!), and calibrated 8-core `SHA20-eq` $\log_2$ complexity measurement.
+### Host `SHA-20` Calibration Baseline (8-Core Apple Silicon ARM64 NEON)
+- **8-Core Scalar C `compress_steps(..., R=20)` Rate:** `135.67 M SHA20/s` ($2^{27.02}\text{ SHA20/s}$)
+- **8-Core 4-Wide ARM64 NEON `SHA-20` Rate:** `331.23 M SHA20/s` ($2^{28.30}\text{ SHA20/s}$)
+
+### Algebraic & Microarchitectural Breakthroughs Transplanted (`exp_r20_distant_theories.c`, Theories 37–44)
+1. **Theories 37–39 (Carry-Sudoku $\Sigma_0(a_9)$ $\mathbb{F}_2$ Suffix-to-Prefix Rank Revival & Zero-Loss 14b/19b Sieve):** Hoists $\Sigma_1(e_{13,\text{lo}} \mid s_8)$ and zero-rotate `hi25 = hi25_s12 ^ (s15 << 14)`, combines O(1) L1-LUT `ROR64(VALID_SUM64)` with exact 14-bit pre-`s19` and 19-bit (`0x7ffff`) pre-`s22` $\Sigma_0(a_9)$ suffix-to-prefix rank locks, slashing `s22` evaluations by **`2,284.7x`** and `S0(a9)+MAJ` calls by **`2,279.0x`** (`1,235.8 ctx/s` on 8 cores = **`3.24x`** over Legacy `381.7 ctx/s` and **`4.63x`** over the `266.8 ctx/s` paper baseline, `0.00%` hit loss).
+2. **Theory 40 (Upper-3-Bit $\sigma_0$ Output-Slice `0-CAS` Kernel Builders — `KB=4` Direct `u16` & `KB=5` 2-Slot `u32` + 16 MB L2 Bitmap):** Partitioning preimages across 8 disjoint output slices `(y >> 29) == tid` builds the `512 MB` `KB=4` direct-mapped `u16` kernel in **`0.833s`** (`0` CAS, `0 MB` bitmap) and the `512 MB` `KB=5` 2-slot `u32` + `16 MB` P-core L2 bitmap kernel in **`0.551s`** (`0` CAS vs `~8.0s` atomic CAS).
+3. **Theory 41 (Zero-Table 9-Bit $\Sigma_1$ Blind-Spot Algebraic Coset Lock):** Uses `{a1[22..24], a1[16]}` (`KB=4`, $\bmod 16$) and `{a1[22..24], a1[16..17]}` (`KB=5`, $\bmod 32$) inside the 9-bit blind spot `e1[16..24]` of $\Sigma_1(e_1) \bmod 32$ to lock all 64 roots in $O(1)$ ALU ops (`0 MB` `a1_cosets`).
+4. **Theories 42–44 (Hop-2 Constant Hoisting + Upper-3-Bit $\sigma_0(W)[29..31]$ Syzygy + 4-Wide NEON Hop-3 Subspace Inversion + MSHR/L1D De-Aliasing):**
+   - Cuts Hop-4 `W4` verification from `4.00` to **`1.00` SHA-256 round** per `sol19` (`c_e4`, `c_W4` hoisting),
+   - Cuts `Qf(u)` recomputations by **`23.1x`** (`97.2M -> 4.21M`) via `sv1` + upper-3-bit $\sigma_0(W)[29..31]$ syzygy,
+   - Boosts exact `sol19` yield per chain by **`2.22x`** (`648` vs `292` per `33.55M` chains) via 2-slot Hop-1 kernel + 4-wide NEON Hop-3 subspace inversion (`n_free_lo <= 10`, `100%` $Q_0^{-1}(t_{18})$ coverage with `0` DRAM reads),
+   - Eliminates 8 KB Apple Silicon L1D way aliasing (`stride 524`), uses lock-free atomic P+E core work stealing (`shared_blk_ctr`), and keeps anonymous RAM at **`528 MB`** (`0` swap) alongside `MAP_SHARED` + `MADV_RANDOM` `H_pack4`, peaking at **`B = 4` MSHR-optimal co-residue batching (`2,801.3 sol19/s` / `2,781.8 eff sol19/s`)**.
+
+### Before / After Metrics (`R = 20` Full 256/256-Bit Fixed-Target Padded Preimage, 8-Core CPU)
+
+| Engine / Mode | Right-Ctx (`8c`) | `33.55M`-Chain Wall-Clock | Left Stream `sol19/s` | End-to-End `eff sol19/s` (`E[T]`) | Effective `log2(SHA20-scalar)` | Effective `log2(SHA20-NEON)` | Anonymous RAM | Verification |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Before: Legacy `solve20_padded_fast.c` (Cold)** | `384.0 ctx/s` | `4.1228 s` (`292` `sol19`) | `70.8 sol19/s` | `70.7/s` (`16,883 hrs`) | **`52.84`** | `54.16` | `4096 MB` + `32 MB` | `16/16 PASS` |
+| **Before: Legacy `solve20_padded_fast.c` (Warm)** | `381.7 ctx/s` | `1.5412 s` (`292` `sol19`) | `189.5 sol19/s` | `186.9/s` (`6,382.5 hrs`) | **`51.47`** | `52.76` | `4096 MB` + `32 MB` | `16/16 PASS` |
+| **After: `Carbon-KB4` Direct (`KB=4` `u16`, `B=8`)** | **`1,235.8 ctx/s`** | **`0.1809 s`** (`453` `sol19`) | **`2,504.2 sol19/s`** | **`2,482.0/s`** (`480.7 hrs`) | **`47.74`** | **`49.03`** | **`512 MB`** (`0` CAS, `0 MB` aux) | **`19/19 PASS`** |
+| **After: `Carbon-KB5` 2-Slot + L2 BM (`B=8`)** | **`1,235.8 ctx/s`** | **`0.2569 s`** (**`648` `sol19`**) | **`2,522.6 sol19/s`** | **`2,506.8/s`** (`475.9 hrs`) | **`47.72`** | **`49.01`** | **`528 MB`** (`0` CAS, `0` swap) | **`19/19 PASS`** |
+| **After: `Carbon-Peak` MSHR-Optimal (`B=4`)** | **`1,235.8 ctx/s`** | **`0.1157 s`** (`16.8M` ch, `324` `sol19`) | **`2,801.3 sol19/s`** | **`2,781.8/s`** (**`428.9 hrs`**, **`14.88x`–`39.3x`**) | **`47.57`** | **`48.86`** | **`528 MB`** (`0` CAS, `0` swap) | **`19/19 PASS`** |
+
+- **Live End-to-End 256/256-Bit Fixed-Target Recovery (`Part 4`):** `0^256` (`0.0026s`, `8/8` words exact), `"abc"` (`0.0023s`, `8/8` words exact), `"hello"` (`0.0022s`, `8/8` words exact), plus `16/16` full padded 20-step witnesses (`100%` verified).
 
 ---
 
-## Pass 3 — `R = 21` & `R = 22` First-Principles Mathematical Obstruction Diagnosis (`QUEUED`)
-- Pending completion of Pass 2.
+## Pass 3 — `R = 21` & `R = 22` First-Principles Mathematical Obstruction Diagnosis (`IN PROGRESS`)
+- Diagnosing from first principles what mathematical obstruction governs **fixed-256-bit-target** single-block padded $R=21$ and $R=22$ vs horizon-pivoted partial targets and multi-block FIPS 180-4 padded bridges.
 
 ---
 

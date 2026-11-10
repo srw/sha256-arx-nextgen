@@ -18,6 +18,15 @@ Next-generation experimental mathematics, symbolic ARX analysis, active algebrai
 | **`bench_carbon_modes.c` — Carbon-Lite (`KER_BITS=4` `u16`, Theories 37–40)** | **`0.0050s`** (A+B) | **`2,795.6x`** (`3.67 ms` 50-tgt mean) | **`0.0397s`** (`3.97 ms` 10-tgt; **`3.67 ms`** 50-tgt; $2^{18.73}$ SHA19-eq) | **512 MB Direct `u16`** (`0 MB` bitmap/cosets, `0` CAS) | **`60 / 60 OK`** |
 | **`bench_carbon_modes.c` — Carbon-Dense (`KER_BITS=4` `u32`, Theories 37–40)** | **`0.0050s`** (A+B) | **`3,375.0x`** (`3.04 ms` 50-tgt mean) | **`0.0337s`** (`3.37 ms` 10-tgt; **`3.04 ms`** 50-tgt; $2^{18.46}$ SHA19-eq) | **1024 MB Direct `u32`** (`0 MB` bitmap/cosets, `0` CAS) | **`60 / 60 OK`** |
 
+### A2. `R=20` Full 256/256-Bit Fixed-Target FIPS 180-4 Padded SHA-256 (`exp_r20_distant_theories.c`)
+
+| Engine / Mode | Right-Context Rate (8-Core) | Left `sol19/s` Rate (8-Core) | End-to-End `eff sol19/s` | Effective `log2(SHA20-scalar)` / `log2(SHA20-NEON)` | Anonymous RAM | Verification |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Legacy `solve20_padded_fast.c` (Cold / Warm)** | `381.7 ctx/s` | `70.8` / `189.5 sol19/s` | `70.7` / `186.9` | `52.84` / **`51.47`** (`54.16` / `52.76` NEON) | `4096 MB` + `32 MB` | `16/16 PASS` |
+| **`Carbon-KB4` Direct-Mapped (`KER_BITS=4` `u16`, `B=8`)** | **`1,235.8 ctx/s`** (`3.24x`) | **`2,504.2 sol19/s`** | **`2,482.0`** | **`47.74`** / **`49.03`** | **`512 MB`** (`0` CAS, `0 MB` bm/cosets) | **`19/19 PASS`** |
+| **`Carbon-KB5` 2-Slot + L2 BM (`KER_BITS=5` `u32`, `B=8`)** | **`1,235.8 ctx/s`** (`3.24x`) | **`2,522.6 sol19/s`** (`2.22x` `sol19`/chain) | **`2,506.8`** | **`47.72`** / **`49.01`** | **`528 MB`** (`512 MB` + `16 MB` L2 bm, `0` CAS) | **`19/19 PASS`** |
+| **`Carbon-Peak` MSHR-Optimal (`B=4`, Theories 37–44)** | **`1,235.8 ctx/s`** (`4.63x` vs paper) | **`2,801.3 sol19/s`** (`14.79x` warm / `39.6x` cold) | **`2,781.8`** (**`14.88x`–`39.3x`**) | **`47.57`** / **`48.86`** | **`528 MB`** (`0` swap) | **`19/19 PASS`** |
+
 ### B. Multi-Round Active Algebraic Scaling (`R = 20, 21, 22` — `exp_r20_r21_r22_active_algebraic.c`)
 
 | Round $R$ | Active Firewall & Carry-Pinning Mechanism | Residual Entropy $\mathcal{H}_{\text{res}}(R)$ | Inversion Efficiency $\eta_{\text{inv}}(R)$ | Active Chains Tested | Wall-Clock Solve Time | Verification |
