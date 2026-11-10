@@ -89,11 +89,34 @@ When generalizing our engine beyond SHA-256 into a reusable SMT solver contribut
 
 ---
 
-## 5. Immediate Action Plan for Session `e28c5bb0`
+## 5. Information-Theoretic Accounting Metrics ($\mathcal{H}_{\text{res}}$, $\eta_{\text{inv}}$, $\mathcal{L}_{\text{anti}}$) & The "No Passive `HD`" Rule
 
-Once current work on `exp_r19_distant_theories.c` completes:
-1. Build a clean, fast prototype of the **Symbolic ARX Pattern & Firewall Analyzer** (`symbolic_arx_analyzer.py`, optionally paired with a C $\mathbb{F}_2$ bit-matrix tool).
-2. Run it on **SHA-256 at $R = 19, 20, 21, 22$** to:
-   * Automatically verify the Jacobian $J_{i,j} = \frac{\partial W_i}{\partial a_j} \pmod{2^{32}}$, confirm all telescopic cancellations ($\frac{\partial W_{17}}{\partial a_{14}} = 0$), and enumerate all co-variation nullspaces ($\Delta a_9 + \Delta a_5 = 0$, etc.).
-   * Search for any **new, previously unnoticed multi-word cancellations or lower-treewidth firewall cuts** at $R = 20, 21, 22$.
-3. Report the discovered algebraic invariants and optimal firewall cuts back to the user.
+### 5.1 Why Hamming Distance (`HD`) Must NEVER Be Used as an Optimization Target
+* **Deceptive Local Minima in $\mathbb{Z}_{2^{32}}$:** In modular addition, carries propagate strictly causally from LSB to MSB. A candidate with scattered bit mismatches (e.g., `HD(W20, W20*) == 1` at bit 5) is **not** "1 bit away" from a solution, because flipping bit 5 alters the carry into bits $6 \dots 31$ and cascades through $\Sigma_0, \Sigma_1, \sigma_0, \sigma_1$, destroying all higher matching bits.
+* **The Passive-Residual Trap:** Optimizing `HD` encourages leaving the top recurrence ($\rho_{20} = 0$ at $R=21$) outside the algebraic solver as a passive $2^{-32}$ post-filter.
+* **Mandatory Rule:** Every round constraint ($\rho_{16} = 0 \dots \rho_{R-1} = 0$, FIPS 180-4 padding, and firewall splice) must be wired into the solver as an **exact algebraic equation** (or causal 2-adic Hensel condition $\rho_t \equiv 0 \pmod{2^k}$ from LSB to MSB).
+
+### 5.2 Three Quantitative Metrics to Evaluate Every Topology & Pass
+1. **Cutset Residual Search Entropy ($\mathcal{H}_{\text{res}}(R)$, in bits):**
+   $$\mathcal{H}_{\text{res}}(R) = C_{\text{total}}(R) - I_{\text{alg}}(R)$$
+   where $C_{\text{total}}(R)$ is the total number of coupled boundary + recurrence constraint bits across the firewall cut (e.g., $275.0\text{ bits}$ at $R=19$) and $I_{\text{alg}}(R)$ is the number of constraint bits resolved deterministically in $O(1)$ via algebraic inversions (`rec_u_z`, 2-adic Hensel trees, $S_1$ involutions, $\Sigma_0^{-1}$, triangular pivots). Expected trials to reach an exact solution scales as $\mathbb{E}[\text{Work}] \approx 2^{\mathcal{H}_{\text{res}}(R)}$.
+2. **Algebraic Inversion Efficiency ($\eta_{\text{inv}}(R) \in [0\%, 100\%]$):**
+   $$\eta_{\text{inv}}(R) = \frac{I_{\text{alg}}(R)}{C_{\text{total}}(R)} = 1 - \frac{\mathcal{H}_{\text{res}}(R)}{C_{\text{total}}(R)}$$
+   *(Benchmark reference at $R=19$: `exp_r19_distant_theories.c` resolves $253.5 / 275.0\text{ bits}$ algebraically $\implies \mathcal{H}_{\text{res}}(19) \approx 21.5\text{ bits}, \eta_{\text{inv}}(19) = 92.2\%$).*
+3. **Anti-Causal Rotation Leakage Rank ($\mathcal{L}_{\text{anti}}(L, k)$):**
+   $$\mathcal{L}_{\text{anti}}(L, k) = \text{rank}_{\mathbb{F}_2}\!\left(P_{0..k} \cdot M_L \cdot P_{k+1..31}^T\right)$$
+   Measures how many MSB bits wrap back down into LSB bits $0..k$ across right-rotations ($\Sigma_0, \Sigma_1, \sigma_0, \sigma_1$), defining the theoretical floor for 1-pass LSB-to-MSB 2-adic Hensel lifting on a given topology.
+
+---
+
+## 6. Autonomous Multi-Pass Execution Protocol for Session `e28c5bb0`
+
+Once current work on `exp_r19_distant_theories.c` completes, execute a **continuous, multi-pass algebraic optimization loop** across $R = 19, 20, 21, 22$ without stopping after a single pass:
+
+1. **Pass 1 — Build & Run the Symbolic ARX Pattern & Firewall Analyzer (`symbolic_arx_analyzer.py` + C $\mathbb{F}_2$ helper):**
+   * Compute and output the exact symbolic Jacobians $J_{i,j} = \frac{\partial W_i}{\partial a_j} \pmod{2^{32}}$, telescopic cancellations (e.g., $\frac{\partial W_{17}}{\partial a_{14}} \equiv 0$), co-variation nullspaces $\ker J$ (e.g., $\Delta a_9 + \Delta a_5 = 0$), anti-causal leakage ranks $\mathcal{L}_{\text{anti}}$, and full $\mathcal{H}_{\text{res}}(R)$ / $\eta_{\text{inv}}(R)$ accounting tables for **$R = 19, 20, 21, 22$**.
+2. **Pass 2+ — Continuous $\Delta \mathcal{H}_{\text{res}}(R) < 0$ Optimization & Automatic Round Promotion ($R \to R+1$):**
+   * **Strict Entropy Gate:** Every pass must reduce $\mathcal{H}_{\text{res}}(R)$ (exponentially reducing `ctx_tried` or `chains_tried` via exact algebraic inversion).
+   * **Anti-Plateau Rule:** If 2 consecutive passes on the same round leave $\mathcal{H}_{\text{res}}(R)$ unchanged ($\Delta \mathcal{H}_{\text{res}} = 0$, only shaving CPU cycles), immediately stop micro-optimizing that loop and switch to a new firewall topology or promote to $R + 1$.
+   * **Immediate $R \to R+1$ Transfer:** Port the $\Delta \mathcal{H}_{\text{res}} < 0$ algebraic primitives (`rec_u_z` subspace inversion, 2-adic Hensel `Op2` lifting, $S_1(E_{13})$ byte-involution, dynamic $a_9 + a_5 = C_9$ co-variation, and 4-hop $W_1 \dots W_4$ bridges) directly to **$R = 20$ and $R = 21$**, wiring $\rho_{19} = 0$ and $\rho_{20} = 0$ as active algebraic constraints so $\mathcal{H}_{\text{res}}(20)$ and $\mathcal{H}_{\text{res}}(21)$ drop analytically.
+

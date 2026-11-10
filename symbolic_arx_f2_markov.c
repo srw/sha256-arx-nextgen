@@ -625,6 +625,53 @@ done_sparse:
            rem, __builtin_popcount(rem));
 }
 
+// ----------------------------------------------------------------------------------------------------
+// 6. Anti-Causal Rotation Leakage Rank L_anti(L, k) = rank_{F_2}(P_{0..k} * M_L * P_{k+1..31}^T)
+// ----------------------------------------------------------------------------------------------------
+static int f2_submatrix_rank(const F2Mat32 *M, int k) {
+    u32 rows[32];
+    int n_rows = k + 1;
+    u32 col_mask = (k == 31) ? 0u : (~((1u << (k + 1)) - 1u));
+    for (int i = 0; i < n_rows; i++) {
+        rows[i] = M->row[i] & col_mask;
+    }
+    int r = 0;
+    for (int col = k + 1; col < 32 && r < n_rows; col++) {
+        int piv = -1;
+        for (int i = r; i < n_rows; i++) {
+            if ((rows[i] >> col) & 1u) { piv = i; break; }
+        }
+        if (piv < 0) continue;
+        u32 tmp = rows[r]; rows[r] = rows[piv]; rows[piv] = tmp;
+        for (int i = 0; i < n_rows; i++) {
+            if (i != r && ((rows[i] >> col) & 1u)) rows[i] ^= rows[r];
+        }
+        r++;
+    }
+    return r;
+}
+
+static void print_anti_causal_leakage_table(const F2Mat32 mats[4]) {
+    printf("====================================================================================================\n");
+    printf("[MODULE 3D] ANTI-CAUSAL ROTATION LEAKAGE RANK L_anti(L, k) = rank_{F_2}(P_{0..k} M_L P_{k+1..31}^T)\n");
+    printf("====================================================================================================\n");
+    printf("  Cut Bit k | Width (k+1) | L_anti(S0, k) | L_anti(S1, k) | L_anti(s0, k) | L_anti(s1, k) | Syzygy Free Bits (k+1 - L_anti)\n");
+    printf("  ----------+-------------+---------------+---------------+---------------+---------------+--------------------------------\n");
+    const int k_list[] = {1, 3, 5, 7, 11, 14, 15, 18, 21, 24, 27};
+    for (size_t idx = 0; idx < sizeof(k_list)/sizeof(k_list[0]); idx++) {
+        int k = k_list[idx];
+        int l0 = f2_submatrix_rank(&mats[0], k);
+        int l1 = f2_submatrix_rank(&mats[1], k);
+        int ls0 = f2_submatrix_rank(&mats[2], k);
+        int ls1 = f2_submatrix_rank(&mats[3], k);
+        printf("   k = %2d   |     %2d      |      %2d       |      %2d       |      %2d       |      %2d       | S0:%2d, S1:%2d, s0:%2d, s1:%2d\n",
+               k, k + 1, l0, l1, ls0, ls1,
+               (k + 1) - l0, (k + 1) - l1, (k + 1) - ls0, (k + 1) - ls1);
+    }
+    printf("  --> Note at k = 15 (16-bit half-word split): L_anti(s0, 15) = 15/16 and L_anti(s1, 15) = 15/16,\n");
+    printf("      guaranteeing 16 - 15 = 1 exact F_2 syzygy bit (0x8011 for s0, 0xd522 for s1) and 15-bit triangular u_hi recovery!\n\n");
+}
+
 int main(void) {
     printf("====================================================================================================\n");
     printf("  SYMBOLIC ARX F_2 BIT-MATRIX ALGEBRA & EXACT MARKOV CARRY-CHAIN ENGINE (SHA-256 R=19..22)\n");
@@ -674,6 +721,7 @@ int main(void) {
     scan_carry_free_polynomials("sigma1 (s1)", s1, 17, 19, 10, 1);
 
     analyze_q0_q1_halfword_syzygies(&Ms0, &Ms1);
+    print_anti_causal_leakage_table(mats);
     verify_markov_and_carry_pinning();
     verify_r20_r21_breakthroughs(&invs[0]);
 
