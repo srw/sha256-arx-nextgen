@@ -4,10 +4,16 @@ MFLAGS  = -O3 -march=native -fobjc-arc -framework Foundation -framework Metal -l
 
 .PHONY: all test clean
 
-all: exp_r19_distant_theories exp_r19_metal_gpu symbolic_arx_f2_markov exp_r20_r21_r22_active_algebraic
+all: exp_r19_distant_theories exp_r19_carbon_lab bench_carbon_modes exp_r19_metal_gpu symbolic_arx_f2_markov exp_r20_r21_r22_active_algebraic
 
 exp_r19_distant_theories: exp_r19_distant_theories.c
 	$(CC) $(CFLAGS) exp_r19_distant_theories.c -o exp_r19_distant_theories
+
+exp_r19_carbon_lab: exp_r19_carbon_lab.c
+	$(CC) $(CFLAGS) exp_r19_carbon_lab.c -o exp_r19_carbon_lab
+
+bench_carbon_modes: bench_carbon_modes.c exp_r19_carbon_lab.c
+	$(CC) $(CFLAGS) bench_carbon_modes.c -lm -o bench_carbon_modes
 
 exp_r19_metal_gpu: exp_r19_metal_gpu.m
 	$(CC) $(MFLAGS) exp_r19_metal_gpu.m -o exp_r19_metal_gpu
@@ -20,9 +26,11 @@ exp_r20_r21_r22_active_algebraic: exp_r20_r21_r22_active_algebraic.c
 
 test: all
 	./exp_r19_distant_theories
+	./exp_r19_carbon_lab
+	./bench_carbon_modes
 	./exp_r19_metal_gpu
 	python3 symbolic_arx_analyzer.py
 	./exp_r20_r21_r22_active_algebraic
 
 clean:
-	rm -f exp_r19_distant_theories exp_r19_metal_gpu symbolic_arx_f2_markov exp_r20_r21_r22_active_algebraic
+	rm -f exp_r19_distant_theories exp_r19_carbon_lab bench_carbon_modes exp_r19_metal_gpu symbolic_arx_f2_markov exp_r20_r21_r22_active_algebraic
