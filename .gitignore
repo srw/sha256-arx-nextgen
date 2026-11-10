@@ -1,0 +1,14 @@
+# Compiled binaries & object files
+exp_r19_distant_theories
+exp_r19_metal_gpu
+symbolic_arx_f2_markov
+*.o
+*.dSYM/
+*.out
+
+# Python cache
+__pycache__/
+*.pyc
+
+# macOS metadata
+.DS_Store
