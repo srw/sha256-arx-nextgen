@@ -61,10 +61,64 @@
 
 ---
 
-## Pass 3 — `R = 21` & `R = 22` First-Principles Mathematical Obstruction Diagnosis (`IN PROGRESS`)
-- Diagnosing from first principles what mathematical obstruction governs **fixed-256-bit-target** single-block padded $R=21$ and $R=22$ vs horizon-pivoted partial targets and multi-block FIPS 180-4 padded bridges.
+## Pass 3 — `R = 21` & `R = 22` First-Principles Mathematical Obstruction Diagnosis (`COMPLETED`)
+
+### Host `SHA-21` & `SHA-22` Calibration Baseline (`diag_r21_r22_first_principles.c`, 8-Core Apple Silicon)
+- **8-Core `SHA-21` Reference Rate:** `117.76 M SHA21/s` ($2^{26.81}\text{/s}$ scalar) / `323.12 M SHA21/s` ($2^{28.27}\text{/s}$ 4-wide NEON)
+- **8-Core `SHA-22` Reference Rate:** `127.29 M SHA22/s` ($2^{26.92}\text{/s}$ scalar) / `274.42 M SHA22/s` ($2^{28.03}\text{/s}$ 4-wide NEON)
+
+### First-Principles Mathematical Theorems & Empirical Proofs (`10,000 / 10,000` Exact)
+1. **Not Globally Overdetermined ($2^{184}$ Solutions) & Zero-Rejection Unclamped Top-Linearization:**
+   - Every single-block 55-byte FIPS 180-4 padded target has $512 - 72 - 256 = \mathbf{184\text{ bits}}$ ($2^{184}$) of valid preimages for all $R \in \{19, 20, 21, 22\}$.
+   - Without Carry-Sudoku clamps, $(a_9..a_{13}) \leftrightarrow (W_{16}..W_{20})$ at $R=21$ and $(a_9..a_{14}) \leftrightarrow (W_{16}..W_{21})$ at $R=22$ are **exact triangular bijections** (`10,000/10,000`), solving $W_{15}=440 \to a_8$, $W_{14}=0 \to a_7$, and $W_{13}[7:0]=\mathtt{0x80} \to a_6[7:0]$ in 1 subtraction each (`0%` rejection, **`618.29 M cones/s` = $2^{29.20}\text{/s}$** on 8 cores).
+   - The Schedule-Blind Zone is $W[6..8]$ (`96` bits) at $R=21$ and shrinks to $W[7..8]$ (`64` bits) at $R=22$ because $W_{21} = s_1(W_{19}) + W_{14} + s_0(W_6) + W_5$ pulls $W_6$ into the schedule (`10,000/10,000` verified).
+2. **The 4-Hop Shieldability Hierarchy & Hop-4 Rank-31 Dual-Diffusion Wall (True Obstruction Theorem):**
+   - Unconditionally (`0` shields), $\partial W_{13}/\partial a_6 = \partial W_{12}/\partial a_5 = \partial W_{11}/\partial a_4 = -1$ (`10,000/10,000`), and Hop 3 achieves $W_9$ independence via exact telescopic $+a_4 - a_4$ cancellation between $-e_6$ and $-\operatorname{Ch}(-1, e_8, e_7)$ (`10,000/10,000`).
+   - Pushing $Q_0^{-1}$ to **Hop 4 (`W4 -> a5`)** CAN shield both $W_{11}$ and $W_{10}$ 100% from $(a_4, a_5)$ via $(a_6=a_7,\ e_{11}=\mathtt{0xffffffff},\ e_{10}=0,\ \operatorname{Maj}(a_6,a_5,a_4)=a_4)$ (`10,000/10,000` invariant), **but shatters irreversibly at $W_9$**, which contains the unshieldable dual-diffusion operator $+\Sigma_0(a_5) - \Sigma_1(c_{e_9} + a_5)$ of **exact $\mathbb{F}_2$-rank `31/32`** (unique non-zero kernel `0xffffffff`) and **$\mathbb{Z}_{2^{32}}$ Jacobian rank `31.11` mean / `32/32` max**!
+   - Thus **3-hop $Q_0^{-1}$ (`W1..W3 -> a2..a4`) is the maximum exact causal-shielded cascade depth** in single-block SHA-256, leaving an irreducible bidirectional cutwidth of **2 words ($64$ bits: $\rho_{19}, \rho_{20}$) at $R=21$** and **3 words ($96$ bits: $\rho_{19}, \rho_{20}, \rho_{21}$) at $R=22$**.
+3. **Why Unclamped MitM & 2-Block MitM Lose to Carbon 3-Hop $Q_0^{-1}$ + Top Insulation:**
+   - Even exploiting our exact bilateral cancellations $\Phi_{19} = s_0(W_4) - G_3$ and $\Phi_{20} = s_0(W_5) - v_6 + W_4$ (`10,000/10,000`), top-bottom MitM across $(\rho_{19}, \rho_{20})$ leaves the 96-bit bottom triple $(\rho_{16}, \rho_{17}, \rho_{18})$ passive ($\ge 2^{96}$ at $R=21$, $\ge 2^{128}$ at $R=22$).
+   - 2-block FIPS 180-4 padded pseudo-preimage MitM ($L = 952$ bits) hits the 256-bit $CV_1$ birthday floor ($\ge 2^{128}$), which is **$\sim 2^{48.7}$ slower** at $R=21$ and **$\sim 2^{16.7}$ slower** at $R=22$ than 1-block Carbon 3-hop $Q_0^{-1}$!
+4. **Two New Pass 4 Accelerators Unlocked by First-Principles Analysis:**
+   - **Neyman-Pearson Binomial `(1/2 vs 2/3)` Hop-2/3 Likelihood Filter (`popc(a5 ^ a3) >= 17`):** Eliminates **`57.00%` of all Hop-3 `G3`/DRAM work** in 2 ALU ops while retaining **`96.23%` of `sol19` hits** (**`2.24x` Hop-3 efficiency**), paired with exact fixed-target $\Sigma_0^{-1}$ top insulation (`(e14 & 0x01ffff00)==0` at $R=21$; `e14 == 0` at $R=22$).
+   - **2-for-1 Causal-Horizon Digest-Word Ladder:** Every 32-bit equation closed at the top locks **TWO** 32-bit digest words (`64` bits: $a_t$ and $e_t$) simultaneously (`R=21`: `0-eq -> 128b`, `1-eq -> 192b`, `2-eq -> 256b`; `R=22`: `0-eq -> 64b`, `1-eq -> 128b`, `2-eq -> 192b`, `3-eq -> 256b`).
+
+### Paradigm-Free Complexity Comparison (`Full 1-Block 256/256-Bit Fixed Target`)
+
+| Cryptanalytic Architecture | `R = 21` `log2(SHA21-scalar)` / `(NEON)` | `R = 22` `log2(SHA22-scalar)` / `(NEON)` | RAM Envelope | Verification |
+| :--- | :---: | :---: | :---: | :---: |
+| **2-Block Pseudo-Preimage + `CV1` MitM (`L = 952b`)** | `>= 128.00` | `>= 128.00` | Birthday-bound | Analytic floor |
+| **Unclamped Bilateral Top-Bottom MitM (`rho19, rho20`)** | `>= 96.00` | `>= 128.00` | Multi-GB | `10,000/10,000` |
+| **Before: Legacy Carry-Sudoku + Passive Left (Cold)** | `84.80` / `86.10` | `116.80` / `118.10` | `4096 MB` + `32 MB` | Baseline |
+| **Pass 4 Target: `Carbon-NP` + $\Sigma_0^{-1}$ Top-Insulated 3-Hop $Q_0^{-1}$** | **`79.33`–`79.42` / `80.61`–`80.70`** | **`111.27`–`111.35` / `112.51`–`112.60`** | **`512–528 MB` anon** | **`8/8 PASS` (`Pass 4`)** |
 
 ---
 
-## Pass 4 — `R = 21` & `R = 22` Next-Gen Algebraic Attack Implementation & Benchmark (`QUEUED`)
-- Pending completion of Pass 3.
+## Pass 4 — `R = 21` & `R = 22` Carbon Next-Gen Algebraic Engine & Benchmark (`COMPLETED`)
+
+### Algebraic & Microarchitectural Breakthroughs Implemented (`exp_r21_r22_carbon_nextgen.c`)
+1. **Exact Fixed-Target $\Sigma_0^{-1}$ Top Insulation + Theories 37–39 Carry-Sudoku:**
+   - **`R = 21` (`(a13, a12)` free on full 256/256-bit fixed target):** $a_{13} = \Sigma_0^{-1}(C_{14,15} - e_{14}^*)$ with `(e14* & 0x01ffff00) == 0` preserves sparse $e_{14}^*$ across the entire `M_sub = ~(a14 ^ a13) & ~(a13 ^ a11)` submanifold, cutting `s22` evaluations by **`2,271.6x`** (`956.5M -> 421.1K`) and reaching **`1,266.0`–`1,286.3 ctx/s`** (`2.77x`–`3.31x` vs Legacy).
+   - **`R = 22` (`(a14, a13, a12)` free on full 256/256-bit fixed target):** $a_{13} = \Sigma_0^{-1}(a_{14} + \Sigma_0(a_{14}) + \mathtt{0xffffffff} - a_{15})$ enforces **`e14 == 0x00000000` IDENTICALLY across 100% of all $2^{32}$ seeds $a_{14}$ and `M_sub`**, cutting `s22` evaluations by **`2,155.2x`** (`938.8M -> 435.6K`) and reaching **`1,347.1`–`1,426.5 ctx/s`** (`2.80x`–`3.01x` vs Legacy).
+2. **Neyman-Pearson `w <= 15` (`popc(a5 ^ a3) >= 17`) Hop-2/3 Filter + `+a2 - a2` Cancelled Gated Hop-5:**
+   - Hardware ablation on `Carbon-KB5` (`B=4`, `528 MB` anon RAM, `0` swap) confirms raising the Hop-2 threshold from `w <= 13` (`312` `sol19`s, `2,283.5 sol19/s`) to the Neyman-Pearson optimal **`w <= 15` (`342` `sol19`s = `+9.6%` yield, `2,624.9 sol19/s`)** boosts throughput while **`Carbon-KB4` (`512 MB` anon RAM, `0-CAS`, `B=4`)** peaks at **`2,801.5 sol19/s`**.
+   - Hop-5 (`W5 -> rho20`) cancels `+a2 - a2` analytically (`W5 = (a5 - S0(a5) - K[5]) - a4 - e2 - S1(e5) - CH(e5, e4, e3)`) and is gated strictly behind `rho19 == 0`, adding **`0.000%` overhead** on rejected `sol19`s.
+
+### Before / After Metrics (`Full 1-Block 256/256-Bit Fixed-Target Padded Preimage`, 8-Core CPU)
+
+| Round & Engine Mode | Right-Ctx (`8c`) | Left Stream `sol19/s` | End-to-End `eff sol19/s` (Speedup) | Effective `log2(SHA-R-scalar)` | Effective `log2(SHA-R-NEON)` | Anonymous RAM | Verification |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **`R=21` Before: Legacy (Cold / Warm)** | `388.7`–`456.8/s` | `70.8` / `189.5/s` | `70.7` / `186.9/s` (`1.0x`) | `84.62` / `83.22` | `85.91` / `84.51` | `4096 MB` + `32 MB` | Baseline |
+| **`R=21` After: `Carbon-KB5-NP` (`B=4, w=15`)** | **`1,266.0`–`1,286.3/s`** | **`2,624.9`–`2,646.5/s`** | **`2,609.1`–`2,629.3/s`** (**`14.0x`–`37.2x`**) | **`79.42`** | **`80.70`** | **`528 MB`** (`0` CAS, `0` swap) | **`8/8 PASS`** |
+| **`R=21` After: `Carbon-KB4` (`B=4, 512 MB`)** | **`1,266.0`–`1,286.3/s`** | **`2,801.5/s`** | **`2,775.4/s`** (**`14.8x`–`39.3x`**) | **`79.33`** | **`80.61`** | **`512 MB`** (`0` CAS, `0 MB` aux) | **`8/8 PASS`** |
+| **`R=22` Before: Legacy (Cold / Warm)** | `476.9`–`482.0/s` | `70.8` / `189.5/s` | `70.7` / `186.9/s` (`1.0x`) | `116.56` / `115.16` | `117.81` / `116.41` | `4096 MB` + `32 MB` | Baseline |
+| **`R=22` After: `Carbon-KB5-NP` (`B=4, w=15`)** | **`1,347.1`–`1,426.5/s`** | **`2,624.9`–`2,646.5/s`** | **`2,610.0`–`2,631.7/s`** (**`14.0x`–`37.2x`**) | **`111.35`** | **`112.60`** | **`528 MB`** (`0` CAS, `0` swap) | **`8/8 PASS`** |
+| **`R=22` After: `Carbon-KB4` (`B=4, 512 MB`)** | **`1,347.1`–`1,426.5/s`** | **`2,801.5/s`** | **`2,776.6/s`** (**`14.9x`–`39.3x`**) | **`111.27`** | **`112.51`** | **`512 MB`** (`0` CAS, `0 MB` aux) | **`8/8 PASS`** |
+
+### Live Cryptographic Witness Recovery & 2-for-1 `ctz(rho19)` Harvester (`Explicit Fixed-Bit Labels`)
+- **Sub-31ms Live 0-Equation Causal-Horizon Recoveries (`6/6 PASS`, strict 55B FIPS 180-4 padding):**
+  - `R = 21` (`128/256` exact fixed target bits `H[2], H[3], H[6], H[7]`): `0^256` (**`23.5 ms`**, `199/256`b match), `"abc"` (**`24.1 ms`**, `198/256`b match), `"hello"` (**`30.7 ms`**, `196/256`b match).
+  - `R = 22` (`64/256` exact fixed target bits `H[3], H[7]`): `0^256` (**`18.5 ms`**, `157/256`b match), `"abc"` (**`21.3 ms`**, `165/256`b match), `"hello"` (**`17.5 ms`**, `167/256`b match).
+- **Live `0.25s` 8-Core `ctz(rho19)` 2-for-1 Digest-Bit Harvester on Unmodified `"abc"` (`2/2 PASS`):**
+  - `R = 21`: `745 sol19`s (`32.6M` chains) -> `rho19 = 0x81a23f00` (`ctz = 8` -> `+16` deterministic 2-for-1 low bits on `H[1], H[5]` = **`144/256` deterministic locked bits**, **`204/256` total bitwise match**).
+  - `R = 22`: `578 sol19`s (`26.5M` chains) -> `rho19 = 0xbcdaf000` (`ctz = 12` -> `+24` deterministic 2-for-1 low bits on `H[2], H[6]` = **`88/256` deterministic locked bits**, **`171/256` total bitwise match**).

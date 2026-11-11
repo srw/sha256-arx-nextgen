@@ -4,7 +4,7 @@ MFLAGS  = -O3 -march=native -fobjc-arc -framework Foundation -framework Metal -l
 
 .PHONY: all test clean
 
-all: exp_r19_distant_theories exp_r19_carbon_lab bench_carbon_modes exp_r19_metal_gpu symbolic_arx_f2_markov exp_r20_distant_theories exp_r20_r21_r22_active_algebraic
+all: exp_r19_distant_theories exp_r19_carbon_lab bench_carbon_modes exp_r19_metal_gpu symbolic_arx_f2_markov exp_r20_distant_theories exp_r20_r21_r22_active_algebraic diag_r21_r22_first_principles exp_r21_r22_carbon_nextgen
 
 exp_r19_distant_theories: exp_r19_distant_theories.c
 	$(CC) $(CFLAGS) exp_r19_distant_theories.c -o exp_r19_distant_theories
@@ -27,6 +27,12 @@ exp_r20_distant_theories: exp_r20_distant_theories.c
 exp_r20_r21_r22_active_algebraic: exp_r20_r21_r22_active_algebraic.c
 	$(CC) $(CFLAGS) exp_r20_r21_r22_active_algebraic.c -o exp_r20_r21_r22_active_algebraic
 
+diag_r21_r22_first_principles: diag_r21_r22_first_principles.c
+	$(CC) $(CFLAGS) diag_r21_r22_first_principles.c -lm -o diag_r21_r22_first_principles
+
+exp_r21_r22_carbon_nextgen: exp_r21_r22_carbon_nextgen.c
+	$(CC) $(CFLAGS) exp_r21_r22_carbon_nextgen.c -lm -o exp_r21_r22_carbon_nextgen
+
 test: all
 	./exp_r19_distant_theories
 	./exp_r19_carbon_lab
@@ -35,6 +41,8 @@ test: all
 	python3 symbolic_arx_analyzer.py
 	./exp_r20_distant_theories
 	./exp_r20_r21_r22_active_algebraic
+	./diag_r21_r22_first_principles
+	./exp_r21_r22_carbon_nextgen
 
 clean:
-	rm -f exp_r19_distant_theories exp_r19_carbon_lab bench_carbon_modes exp_r19_metal_gpu symbolic_arx_f2_markov exp_r20_distant_theories exp_r20_r21_r22_active_algebraic
+	rm -f exp_r19_distant_theories exp_r19_carbon_lab bench_carbon_modes exp_r19_metal_gpu symbolic_arx_f2_markov exp_r20_distant_theories exp_r20_r21_r22_active_algebraic diag_r21_r22_first_principles exp_r21_r22_carbon_nextgen

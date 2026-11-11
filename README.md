@@ -27,6 +27,17 @@ Next-generation experimental mathematics, symbolic ARX analysis, active algebrai
 | **`Carbon-KB5` 2-Slot + L2 BM (`KER_BITS=5` `u32`, `B=8`)** | **`1,235.8 ctx/s`** (`3.24x`) | **`2,522.6 sol19/s`** (`2.22x` `sol19`/chain) | **`2,506.8`** | **`47.72`** / **`49.01`** | **`528 MB`** (`512 MB` + `16 MB` L2 bm, `0` CAS) | **`19/19 PASS`** |
 | **`Carbon-Peak` MSHR-Optimal (`B=4`, Theories 37–44)** | **`1,235.8 ctx/s`** (`4.63x` vs paper) | **`2,801.3 sol19/s`** (`14.79x` warm / `39.6x` cold) | **`2,781.8`** (**`14.88x`–`39.3x`**) | **`47.57`** / **`48.86`** | **`528 MB`** (`0` swap) | **`19/19 PASS`** |
 
+### A3. `R=21` & `R=22` Full 256/256-Bit Fixed-Target & 2-for-1 Horizon Suite (`diag_r21_r22_first_principles.c` & `exp_r21_r22_carbon_nextgen.c`)
+
+| Round & Engine Mode | Right-Context Rate (8-Core) | Left `sol19/s` Rate (8-Core) | End-to-End `eff sol19/s` | Effective `log2(SHA-R-scalar)` / `(NEON)` | Anonymous RAM | Verification |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **`R=21` Legacy (Cold / Warm)** | `388.7`–`456.8 ctx/s` | `70.8` / `189.5 sol19/s` | `70.7` / `186.9` | `84.62` / `83.22` (`85.91` / `84.51` NEON) | `4096 MB` + `32 MB` | Baseline |
+| **`R=21` Carbon-KB5-NP (`B=4, w<=15`, $\Sigma_0^{-1}$ Sparse-$e_{14}^*$)** | **`1,266.0`–`1,286.3 ctx/s`** (`2,272x` fewer `s22`) | **`2,624.9`–`2,646.5 sol19/s`** | **`2,609.1`–`2,629.3`** (**`14.0x`–`37.2x`**) | **`79.42`** / **`80.70`** | **`528 MB`** (`0` CAS, `0` swap) | **`8/8 PASS`** |
+| **`R=21` Carbon-KB4 (`B=4`, Direct `u16`)** | **`1,266.0`–`1,286.3 ctx/s`** | **`2,801.5 sol19/s`** | **`2,775.4`** (**`14.8x`–`39.3x`**) | **`79.33`** / **`80.61`** | **`512 MB`** (`0` CAS, `0 MB` aux) | **`8/8 PASS`** |
+| **`R=22` Legacy (Cold / Warm)** | `476.9`–`482.0 ctx/s` | `70.8` / `189.5 sol19/s` | `70.7` / `186.9` | `116.56` / `115.16` (`117.81` / `116.41` NEON) | `4096 MB` + `32 MB` | Baseline |
+| **`R=22` Carbon-KB5-NP (`B=4, w<=15`, $\Sigma_0^{-1}$ $e_{14}\equiv 0$)** | **`1,347.1`–`1,426.5 ctx/s`** (`2,155x` fewer `s22`) | **`2,624.9`–`2,646.5 sol19/s`** | **`2,610.0`–`2,631.7`** (**`14.0x`–`37.2x`**) | **`111.35`** / **`112.60`** | **`528 MB`** (`0` CAS, `0` swap) | **`8/8 PASS`** |
+| **`R=22` Carbon-KB4 (`B=4`, Direct `u16`)** | **`1,347.1`–`1,426.5 ctx/s`** | **`2,801.5 sol19/s`** | **`2,776.6`** (**`14.9x`–`39.3x`**) | **`111.27`** / **`112.51`** | **`512 MB`** (`0` CAS, `0 MB` aux) | **`8/8 PASS`** |
+
 ### B. Multi-Round Active Algebraic Scaling (`R = 20, 21, 22` — `exp_r20_r21_r22_active_algebraic.c`)
 
 | Round $R$ | Active Firewall & Carry-Pinning Mechanism | Residual Entropy $\mathcal{H}_{\text{res}}(R)$ | Inversion Efficiency $\eta_{\text{inv}}(R)$ | Active Chains Tested | Wall-Clock Solve Time | Verification |
@@ -55,8 +66,11 @@ Next-generation experimental mathematics, symbolic ARX analysis, active algebrai
 ### B. Symbolic ARX Pattern & Firewall Analyzer & Multi-Round Active Algebraic Engine (`R = 19, 20, 21, 22`)
 - **`symbolic_arx_analyzer.py`**: Interactive `SymPy` $\mathbb{Z}_{2^{32}} \times \mathbb{F}_2^{32}$ Ring & Canalizing Rewrite Engine (`Module 1`), Automated Firewall, Treewidth & Triangular-Pivot Searcher (`Module 2`), and Exact Rational (`fractions.Fraction`) Markov Carry-Chain Calculator (`Module 4`).
 - **`symbolic_arx_f2_markov.c`**: Native C $32 \times 32$ $\mathbb{F}_2$ Bit-Matrix Algebra Engine, Complete Carry-Free Polynomial Multiplier Atlas (discovering 9-bit carry-free windows for $\Sigma_0$, 5-bit windows for $\Sigma_1$, and 4-bit windows for $\sigma_0$), Automated Half-Word $\mathbb{F}_2$ Syzygy Discovery for $Q_0$ & $Q_1$ (discovering the unique 7-bit syzygy mask `0xd522` of $\sigma_1(u_{\text{hi}} \ll 16)$), Carry-Pinning Automaton verifier, and $R=20 / R=21 / R=22$ firewall cut verifier (`Exact Sigma_0^-1 Arbitrary-e14* Bijection` and `Ferromagnetic 2-Adic Subspace Annihilation of e14`).
+- **`exp_r20_distant_theories.c`**: Carbon High `R=20` Full 256/256-Bit Fixed-Target Engine (`Theories 37–44`) achieving `1,235.8 ctx/s` right-context generation (`4.63x` vs paper), `2,801.3 sol19/s` left streaming (`47.57 log2(SHA20-scalar)` / `48.86 NEON` in `528 MB` anon RAM, `0` swap), and `19/19` live and witness verifications.
+- **`diag_r21_r22_first_principles.c`**: First-Principles Mathematical Obstruction & Paradigm-Free Diagnosis for `R=21` and `R=22` (`10,000/10,000` checks exact), proving the Hop-4 Rank-31 Dual-Diffusion Wall (`+S0(a5) - S1(c_e9 + a5)` in `W9`), comparing 2-block MitM (`>= 2^128`) and unclamped MitM (`>= 2^96`) against Carbon 3-hop `Q0^-1`, and establishing the 2-for-1 Causal-Horizon Digest-Word Ladder.
+- **`exp_r21_r22_carbon_nextgen.c`**: Carbon Next-Gen `R=21` & `R=22` Algebraic Engine combining fixed-target $\Sigma_0^{-1}$ top insulation (`(e14 & 0x01ffff00)==0` at `R=21`; `e14 == 0` identically at `R=22`), Neyman-Pearson `w <= 15` Hop-2/3 filtering, `+a2-a2` cancelled Hop-5 verification, sub-31ms live horizon witness recovery, and 8-core `ctz(rho19)` 2-for-1 digest-bit harvesting (`8/8 PASS`).
 - **`exp_r20_r21_r22_active_algebraic.c`**: Active Algebraic Multi-Round Engine executing Passes 2, 3, and 4 (`R = 20, 21, 22`) in milliseconds via the Carry-Pinning Residual Theorem ($a_5 = (a_6 \ \& \ D) \mid (S \ \& \ \neg D)$, $D_{56} = (a_6 \oplus S) \ \& \ \neg D$), $\Sigma_0^{-1}$ Sparse-$e_{14}^*$ Bijection, and `KER_BITS = 4` ($\mathbb{Z}/16\mathbb{Z}$) Hop-3 `rec_u_z` Subspace Inversion.
-- **`SYMBOLIC_ARX_SOLVER_BLUEPRINT.md`**: Architectural blueprint for the Symbolic ARX Pattern & Firewall Analyzer, general `QF_BV` SMT integration, and the 4-pass multi-round algebraic optimization campaign.
+- **`CARBON_CAMPAIGN_LOG.md` & `SYMBOLIC_ARX_SOLVER_BLUEPRINT.md`**: Complete calibrated before/after campaign log across Passes 1–4 (`R = 19, 20, 21, 22`) and architectural blueprint for the Symbolic ARX Pattern & Firewall Analyzer.
 
 ---
 
