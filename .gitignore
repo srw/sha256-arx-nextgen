@@ -1,7 +1,13 @@
 # Compiled binaries & object files
 exp_r19_distant_theories
+exp_r19_carbon_lab
+bench_carbon_modes
 exp_r19_metal_gpu
 symbolic_arx_f2_markov
+exp_r20_distant_theories
+exp_r20_r21_r22_active_algebraic
+diag_r21_r22_first_principles
+exp_r21_r22_carbon_nextgen
 *.o
 *.dSYM/
 *.out
