@@ -17,11 +17,17 @@
 #undef main
 
 // KER_BITS = 4 (2^28 = 268,435,456 buckets):
-//   - Mode DENSE: u32 *ht_dense (1,024 MB, 2 x u16 slots, 0 MB bitmap, 0 MB a1_cosets!)
-//   - Mode LITE : u16 *ht_lite  (  512 MB, 1 x u16 slot,  0 MB bitmap, 0 MB a1_cosets!)
-#define KB4          4
-#define KM4          15u
-#define BUCKETS4     (1ULL << 28)
+// Mode configurations:
+//   - KB=4 (Default): BUCKETS = 2^28, ht_dense = 1,024 MB, ht_lite = 512 MB
+//   - KB=5 (Theorem 42): BUCKETS = 2^27, ht_dense = 512 MB, ht_lite = 256 MB
+#ifndef KB
+#define KB           4
+#endif
+#define KM           ((1u << KB) - 1u)
+#define BUCKETS      (1ULL << (32 - KB))
+#define N_UHI        (1u << (14 - KB))
+#define BLK_SHIFT    (11 - KB)
+#define BLK_SIZE     (N_UHI / 8u)
 
 static u32 *ht_dense;
 static u16 *ht_lite;
@@ -30,47 +36,47 @@ static int  g_use_lite = 0;
 static void *build_kb4_worker(void *arg) {
     tbuild_t *tb = (tbuild_t *)arg;
     const u32 tid = (u32)tb->tid;
-    const u32 n_uhi = 1u << (14 - KB4); // 1024 entries (bits 22..31)
+    const u32 n_uhi = N_UHI;
     u32 diff_top_tbl[1024], s0_top_tbl[1024];
     for (u32 uhi = 0; uhi < n_uhi; uhi++) {
-        u32 ut = uhi << (18 + KB4);
+        u32 ut = uhi << (18 + KB);
         diff_top_tbl[uhi] = ut;
         s0_top_tbl[uhi]   = (ut >> 7) ^ (ut >> 18) ^ (ut << 14) ^ (ut >> 3);
     }
-    int lite = g_use_lite;
+    int lite = (g_use_lite == 1);
     for (u32 ulo18 = 1u; ulo18 < (1u << 18); ulo18++) {
         u32 stored_val = ulo18 & 0xffffu;
         if (stored_val == 0u) continue;
-        u32 u_ker   = ((ulo18 ^ (ulo18 >> 3) ^ (ulo18 >> 7)) & KM4) << 18;
+        u32 u_ker   = ((ulo18 ^ (ulo18 >> 3) ^ (ulo18 >> 7)) & KM) << 18;
         u32 base_u  = ulo18 | u_ker;
         u32 s0_base = s0(base_u);
         u32 c_hi3   = s0_base >> 29;
-        u32 blk0    = ((c_hi3 - tid) & 7u) << 7;
-        u32 blk1    = ((c_hi3 - tid - 1u) & 7u) << 7;
+        u32 blk0    = ((c_hi3 - tid) & 7u) << BLK_SHIFT;
+        u32 blk1    = ((c_hi3 - tid - 1u) & 7u) << BLK_SHIFT;
 
         if (!lite) {
-            for (u32 uhi = blk0; uhi < blk0 + 128u; uhi++) {
+            for (u32 uhi = blk0; uhi < blk0 + BLK_SIZE; uhi++) {
                 u32 y = (s0_base ^ s0_top_tbl[uhi]) - (base_u | diff_top_tbl[uhi]);
                 if ((y >> 29) == tid) {
-                    u32 idx = y >> KB4;
+                    u32 idx = y >> KB;
                     ht_dense[idx] = (ht_dense[idx] << 16) | stored_val;
                 }
             }
-            for (u32 uhi = blk1; uhi < blk1 + 128u; uhi++) {
+            for (u32 uhi = blk1; uhi < blk1 + BLK_SIZE; uhi++) {
                 u32 y = (s0_base ^ s0_top_tbl[uhi]) - (base_u | diff_top_tbl[uhi]);
                 if ((y >> 29) == tid) {
-                    u32 idx = y >> KB4;
+                    u32 idx = y >> KB;
                     ht_dense[idx] = (ht_dense[idx] << 16) | stored_val;
                 }
             }
         } else {
-            for (u32 uhi = blk0; uhi < blk0 + 128u; uhi++) {
+            for (u32 uhi = blk0; uhi < blk0 + BLK_SIZE; uhi++) {
                 u32 y = (s0_base ^ s0_top_tbl[uhi]) - (base_u | diff_top_tbl[uhi]);
-                if ((y >> 29) == tid) ht_lite[y >> KB4] = (u16)stored_val;
+                if ((y >> 29) == tid) ht_lite[y >> KB] = (u16)stored_val;
             }
-            for (u32 uhi = blk1; uhi < blk1 + 128u; uhi++) {
+            for (u32 uhi = blk1; uhi < blk1 + BLK_SIZE; uhi++) {
                 u32 y = (s0_base ^ s0_top_tbl[uhi]) - (base_u | diff_top_tbl[uhi]);
-                if ((y >> 29) == tid) ht_lite[y >> KB4] = (u16)stored_val;
+                if ((y >> 29) == tid) ht_lite[y >> KB] = (u16)stored_val;
             }
         }
     }
@@ -79,17 +85,17 @@ static void *build_kb4_worker(void *arg) {
 
 static void *chain_worker_kb4(void *arg) {
     chain_worker_t *cw = (chain_worker_t *)arg;
-    int lite = g_use_lite;
+    int lite = (g_use_lite == 1);
     u32 T16 = cw->base_tr->T16, T17 = cw->base_tr->T17, T18 = cw->base_tr->T18;
     u32 a5 = cw->base_tr->a5, D = cw->base_tr->D;
 
     u32 deltas[16], D_bads[16], F_targets[16];
     int n_deltas = 0;
-    deltas[n_deltas++] = a5 & D;
+    if (((a5 & D) & KM) == 0u) deltas[n_deltas++] = a5 & D;
     for (int dist = 1; dist <= 3; dist++) {
         u32 subD = 0;
         do {
-            if (popc((a5 ^ subD) & D) == dist && n_deltas < 16) deltas[n_deltas++] = subD;
+            if (((subD & KM) == 0u) && popc((a5 ^ subD) & D) == dist && n_deltas < 16) deltas[n_deltas++] = subD;
             subD = (subD - D) & D;
         } while (subD != 0);
     }
@@ -118,82 +124,104 @@ static void *chain_worker_kb4(void *arg) {
     const uint32x4_t v_m_b0   = vdupq_n_u32(0x00010000u);
     const uint32x4_t v_m_b12  = vdupq_n_u32(0x00060000u);
     const uint32x4_t v_m_hi13 = vdupq_n_u32(0xfff80000u);
-    const uint32x4_t v_kmask  = vdupq_n_u32(KM4);
+    const uint32x4_t v_kmask  = vdupq_n_u32(KM);
 
     u32 step = ((u32)cw->tid << 18) ^ ((u32)cw->attempt * 0x9E3779B1u);
     u64 local_chains = 0;
 
+    u32 ring_t16[2][64];
+    u32 ring_a1[2], ring_e1[2], ring_s0[2];
+
+#if KB == 4
+#define COMPUTE_DIFF_DELTA \
+            u32 diff     = (s0_0 ^ (s0_0 - t16_0)) & 15u; \
+            u32 delta_a1 = ((diff & 7u) << 22) | (((diff >> 3) & 1u) << 16);
+#elif KB == 5
+#define COMPUTE_DIFF_DELTA \
+            u32 diff     = (s0_0 ^ (s0_0 - t16_0)) & 31u; \
+            u32 delta_a1 = ((diff & 7u) << 22) | (((diff >> 3) & 1u) << 16) | (((diff >> 4) & 1u) << 17);
+#endif
+
+    #define GEN_CANDIDATE_STEP(slot) do { \
+        while (!atomic_load_explicit(cw->solved, memory_order_relaxed)) { \
+            step++; \
+            u32 idx21    = (step * 1332533u + (u32)cw->tid * 262147u) & 0x001fffffu; \
+            u32 a1_0     = (idx21 & 0x0000ffffu) | ((idx21 >> 16) << 25); \
+            u32 e1_0     = a1_0 + C_E1; \
+            u32 s0_0     = S0(a1_0); \
+            u32 t16_0    = T16 - (a1_0 + C_W0) + C_G1_base + s0_0 + MAJ(a1_0, A0_const, Am1_const) + S1(e1_0) + CH(e1_0, E0_const, Em1_const); \
+            COMPUTE_DIFF_DELTA \
+            if (((e1_0 & 0x01ffffffu) + delta_a1 + (15u << 18)) >= 0x02000000u) continue; \
+            u32 a1_base  = a1_0 | delta_a1; \
+            u32 e1_base       = a1_base + C_E1; \
+            u32 s0_a1_base    = S0(a1_base); \
+            u32 s1_e1_base    = S1(e1_base & 0x3e03ffffu); \
+            u32 e1_mid7_0     = (e1_base >> 18) & 0x7fu; \
+            u32 e1_hi2_0      = e1_base >> 30; \
+            u32 ch1_base_lo18 = (Em1_const ^ (e1_base & CH1_XOR)) & 0x3e03ffffu; \
+            u32 t16_base_f    = T16_folded - a1_base + (a1_base & MAJ1_XOR) + ch1_base_lo18; \
+            uint32x4_t v_t16_b = vdupq_n_u32(t16_base_f); \
+            uint32x4_t v_s0_b  = vdupq_n_u32(s0_a1_base); \
+            uint32x4_t v_s1_b  = vdupq_n_u32(s1_e1_base); \
+            uint32x4_t v_m0  = vaddq_u32(v_t16_b, vaddq_u32(v_flo0,  vld1q_u32(&CH1_MID7[e1_mid7_0 + 0]))); \
+            uint32x4_t v_m4  = vaddq_u32(v_t16_b, vaddq_u32(v_flo4,  vld1q_u32(&CH1_MID7[e1_mid7_0 + 4]))); \
+            uint32x4_t v_m8  = vaddq_u32(v_t16_b, vaddq_u32(v_flo8,  vld1q_u32(&CH1_MID7[e1_mid7_0 + 8]))); \
+            uint32x4_t v_m12 = vaddq_u32(v_t16_b, vaddq_u32(v_flo12, vld1q_u32(&CH1_MID7[e1_mid7_0 + 12]))); \
+            uint32x4_t v_s0_l0  = veorq_u32(v_s0_b, v_s0l0); \
+            uint32x4_t v_s0_l4  = veorq_u32(v_s0_b, v_s0l4); \
+            uint32x4_t v_s0_l8  = veorq_u32(v_s0_b, v_s0l8); \
+            uint32x4_t v_s0_l12 = veorq_u32(v_s0_b, v_s0l12); \
+            uint32x4_t v_s1_l0  = veorq_u32(v_s1_b, vld1q_u32(&S1_MID7[e1_mid7_0 + 0])); \
+            uint32x4_t v_s1_l4  = veorq_u32(v_s1_b, vld1q_u32(&S1_MID7[e1_mid7_0 + 4])); \
+            uint32x4_t v_s1_l8  = veorq_u32(v_s1_b, vld1q_u32(&S1_MID7[e1_mid7_0 + 8])); \
+            uint32x4_t v_s1_l12 = veorq_u32(v_s1_b, vld1q_u32(&S1_MID7[e1_mid7_0 + 12])); \
+            for (u32 f_hi = 0; f_hi < 4u; f_hi++) { \
+                u32 f_hi_sh  = f_hi << 30; \
+                u32 e1_hi    = e1_base + f_hi_sh; \
+                u32 hi_delta = (f_hi_sh & MAJ1_XOR) - f_hi_sh + ((Em1_const ^ (e1_hi & CH1_XOR)) & 0xc0000000u); \
+                uint32x4_t v_hid   = vdupq_n_u32(hi_delta); \
+                uint32x4_t v_s0_hi = vdupq_n_u32(S0_HI2[f_hi]); \
+                uint32x4_t v_s1_hi = vdupq_n_u32(S1_HI2[(e1_hi2_0 + f_hi) & 3u]); \
+                u32 *dst = &ring_t16[slot][f_hi << 4]; \
+                vst1q_u32(&dst[0],  vaddq_u32(vaddq_u32(v_m0,  v_hid), vaddq_u32(veorq_u32(v_s0_l0,  v_s0_hi), veorq_u32(v_s1_l0,  v_s1_hi)))); \
+                vst1q_u32(&dst[4],  vaddq_u32(vaddq_u32(v_m4,  v_hid), vaddq_u32(veorq_u32(v_s0_l4,  v_s0_hi), veorq_u32(v_s1_l4,  v_s1_hi)))); \
+                vst1q_u32(&dst[8],  vaddq_u32(vaddq_u32(v_m8,  v_hid), vaddq_u32(veorq_u32(v_s0_l8,  v_s0_hi), veorq_u32(v_s1_l8,  v_s1_hi)))); \
+                vst1q_u32(&dst[12], vaddq_u32(vaddq_u32(v_m12, v_hid), vaddq_u32(veorq_u32(v_s0_l12, v_s0_hi), veorq_u32(v_s1_l12, v_s1_hi)))); \
+            } \
+            ring_a1[slot] = a1_base; \
+            ring_e1[slot] = e1_base; \
+            ring_s0[slot] = s0_a1_base; \
+            if (!lite) { \
+                for (int f = 0; f < 64; f += 4) { \
+                    __builtin_prefetch(&ht_dense[ring_t16[slot][f]   >> KB], 0, 0); \
+                    __builtin_prefetch(&ht_dense[ring_t16[slot][f+1] >> KB], 0, 0); \
+                    __builtin_prefetch(&ht_dense[ring_t16[slot][f+2] >> KB], 0, 0); \
+                    __builtin_prefetch(&ht_dense[ring_t16[slot][f+3] >> KB], 0, 0); \
+                } \
+            } else { \
+                for (int f = 0; f < 64; f += 4) { \
+                    __builtin_prefetch(&ht_lite[ring_t16[slot][f]   >> KB], 0, 0); \
+                    __builtin_prefetch(&ht_lite[ring_t16[slot][f+1] >> KB], 0, 0); \
+                    __builtin_prefetch(&ht_lite[ring_t16[slot][f+2] >> KB], 0, 0); \
+                    __builtin_prefetch(&ht_lite[ring_t16[slot][f+3] >> KB], 0, 0); \
+                } \
+            } \
+            break; \
+        } \
+    } while (0)
+
+    // Prime slot 0
+    GEN_CANDIDATE_STEP(0);
+    int curr_slot = 0;
+
     while (!atomic_load_explicit(cw->solved, memory_order_relaxed) && local_chains < 1048576ULL) {
-        step++;
-        // At KER_BITS=4, 4-bit coset lock (t16 & 15 == 0) using ONLY 4 bits {a1[22..24], a1[16]}!
-        u32 idx21    = (step * 1332533u + (u32)cw->tid * 262147u) & 0x001fffffu;
-        u32 a1_0     = (idx21 & 0x0000ffffu) | ((idx21 >> 16) << 25);
-        u32 e1_0     = a1_0 + C_E1;
-        u32 s0_0     = S0(a1_0);
-        u32 t16_0    = T16 - (a1_0 + C_W0) + C_G1_base + s0_0 + MAJ(a1_0, A0_const, Am1_const) + S1(e1_0) + CH(e1_0, E0_const, Em1_const);
-        u32 diff4    = (s0_0 ^ (s0_0 - t16_0)) & 15u;
-        u32 delta_a1 = ((diff4 & 7u) << 22) | (((diff4 >> 3) & 1u) << 16);
-        if (((e1_0 & 0x01ffffffu) + delta_a1 + (15u << 18)) >= 0x02000000u) continue;
-        u32 a1_base  = a1_0 | delta_a1;
+        int next_slot = curr_slot ^ 1;
+        GEN_CANDIDATE_STEP(next_slot);
 
-        u32 e1_base       = a1_base + C_E1;
-        u32 s0_a1_base    = S0(a1_base);
-        u32 s1_e1_base    = S1(e1_base & 0x3e03ffffu);
-        u32 e1_mid7_0     = (e1_base >> 18) & 0x7fu;
-        u32 e1_hi2_0      = e1_base >> 30;
-        u32 ch1_base_lo18 = (Em1_const ^ (e1_base & CH1_XOR)) & 0x3e03ffffu;
-        u32 t16_base_f    = T16_folded - a1_base + (a1_base & MAJ1_XOR) + ch1_base_lo18;
-
-        uint32x4_t v_t16_b = vdupq_n_u32(t16_base_f);
-        uint32x4_t v_s0_b  = vdupq_n_u32(s0_a1_base);
-        uint32x4_t v_s1_b  = vdupq_n_u32(s1_e1_base);
-
-        uint32x4_t v_m0  = vaddq_u32(v_t16_b, vaddq_u32(v_flo0,  vld1q_u32(&CH1_MID7[e1_mid7_0 + 0])));
-        uint32x4_t v_m4  = vaddq_u32(v_t16_b, vaddq_u32(v_flo4,  vld1q_u32(&CH1_MID7[e1_mid7_0 + 4])));
-        uint32x4_t v_m8  = vaddq_u32(v_t16_b, vaddq_u32(v_flo8,  vld1q_u32(&CH1_MID7[e1_mid7_0 + 8])));
-        uint32x4_t v_m12 = vaddq_u32(v_t16_b, vaddq_u32(v_flo12, vld1q_u32(&CH1_MID7[e1_mid7_0 + 12])));
-
-        uint32x4_t v_s0_l0  = veorq_u32(v_s0_b, v_s0l0);
-        uint32x4_t v_s0_l4  = veorq_u32(v_s0_b, v_s0l4);
-        uint32x4_t v_s0_l8  = veorq_u32(v_s0_b, v_s0l8);
-        uint32x4_t v_s0_l12 = veorq_u32(v_s0_b, v_s0l12);
-
-        uint32x4_t v_s1_l0  = veorq_u32(v_s1_b, vld1q_u32(&S1_MID7[e1_mid7_0 + 0]));
-        uint32x4_t v_s1_l4  = veorq_u32(v_s1_b, vld1q_u32(&S1_MID7[e1_mid7_0 + 4]));
-        uint32x4_t v_s1_l8  = veorq_u32(v_s1_b, vld1q_u32(&S1_MID7[e1_mid7_0 + 8]));
-        uint32x4_t v_s1_l12 = veorq_u32(v_s1_b, vld1q_u32(&S1_MID7[e1_mid7_0 + 12]));
-
-        u32 all_t16[64];
-        for (u32 f_hi = 0; f_hi < 4u; f_hi++) {
-            u32 f_hi_sh  = f_hi << 30;
-            u32 e1_hi    = e1_base + f_hi_sh;
-            u32 hi_delta = (f_hi_sh & MAJ1_XOR) - f_hi_sh + ((Em1_const ^ (e1_hi & CH1_XOR)) & 0xc0000000u);
-            uint32x4_t v_hid   = vdupq_n_u32(hi_delta);
-            uint32x4_t v_s0_hi = vdupq_n_u32(S0_HI2[f_hi]);
-            uint32x4_t v_s1_hi = vdupq_n_u32(S1_HI2[(e1_hi2_0 + f_hi) & 3u]);
-
-            u32 *dst = &all_t16[f_hi << 4];
-            vst1q_u32(&dst[0],  vaddq_u32(vaddq_u32(v_m0,  v_hid), vaddq_u32(veorq_u32(v_s0_l0,  v_s0_hi), veorq_u32(v_s1_l0,  v_s1_hi))));
-            vst1q_u32(&dst[4],  vaddq_u32(vaddq_u32(v_m4,  v_hid), vaddq_u32(veorq_u32(v_s0_l4,  v_s0_hi), veorq_u32(v_s1_l4,  v_s1_hi))));
-            vst1q_u32(&dst[8],  vaddq_u32(vaddq_u32(v_m8,  v_hid), vaddq_u32(veorq_u32(v_s0_l8,  v_s0_hi), veorq_u32(v_s1_l8,  v_s1_hi))));
-            vst1q_u32(&dst[12], vaddq_u32(vaddq_u32(v_m12, v_hid), vaddq_u32(veorq_u32(v_s0_l12, v_s0_hi), veorq_u32(v_s1_l12, v_s1_hi))));
-        }
-
-        if (!lite) {
-            for (int f = 0; f < 64; f += 4) {
-                __builtin_prefetch(&ht_dense[all_t16[f]   >> KB4], 0, 0);
-                __builtin_prefetch(&ht_dense[all_t16[f+1] >> KB4], 0, 0);
-                __builtin_prefetch(&ht_dense[all_t16[f+2] >> KB4], 0, 0);
-                __builtin_prefetch(&ht_dense[all_t16[f+3] >> KB4], 0, 0);
-            }
-        } else {
-            for (int f = 0; f < 64; f += 4) {
-                __builtin_prefetch(&ht_lite[all_t16[f]   >> KB4], 0, 0);
-                __builtin_prefetch(&ht_lite[all_t16[f+1] >> KB4], 0, 0);
-                __builtin_prefetch(&ht_lite[all_t16[f+2] >> KB4], 0, 0);
-                __builtin_prefetch(&ht_lite[all_t16[f+3] >> KB4], 0, 0);
-            }
-        }
+        u32 *all_t16    = ring_t16[curr_slot];
+        u32 a1_base     = ring_a1[curr_slot];
+        u32 e1_base     = ring_e1[curr_slot];
+        u32 s0_a1_base  = ring_s0[curr_slot];
         local_chains += 64;
 
         u32 hit_a1[64], hit_e1[64], hit_t16[64], hit_G1[64], hit_e2b[64];
@@ -203,7 +231,7 @@ static void *chain_worker_kb4(void *arg) {
 
         for (int f = 0; f < 64; f++) {
             u32 t16  = all_t16[f];
-            u32 pack = lite ? (u32)ht_lite[t16 >> KB4] : ht_dense[t16 >> KB4];
+            u32 pack = lite ? (u32)ht_lite[t16 >> KB] : ht_dense[t16 >> KB];
             if (!pack) continue;
             int h = n_hits++;
             u32 f_lo    = f & 15u, f_hi = f >> 4;
@@ -263,13 +291,18 @@ static void *chain_worker_kb4(void *arg) {
                 int lim = (k + 4 <= n_w1) ? 4 : (n_w1 - k);
                 for (int lane = 0; lane < lim; lane++) {
                     u32 t17_base = t17b_arr[lane];
-                    if ((t17_base & KM4) != 0u) continue;
+                    if ((t17_base & KM) != 0u) continue;
                     u32 G2 = G2_arr[lane];
+
+                    if (!lite) {
+                        for (int d = 0; d < n_deltas; d++)
+                            __builtin_prefetch(&ht_dense[(t17_base - deltas[d]) >> KB], 0, 0);
+                    }
 
                     for (int d_idx = 0; d_idx < n_deltas; d_idx++) {
                         u32 delta = deltas[d_idx];
                         u32 t17   = t17_base - delta;
-                        u32 pack2 = lite ? (u32)ht_lite[t17 >> KB4] : ht_dense[t17 >> KB4];
+                        u32 pack2 = lite ? (u32)ht_lite[t17 >> KB] : ht_dense[t17 >> KB];
                         if (!pack2) continue;
 
                         u32 D_bad    = D_bads[d_idx];
@@ -307,10 +340,14 @@ static void *chain_worker_kb4(void *arg) {
                             u32 G3 = C_G3_base + sm3 + S1(e3) + CH(e3, e2, e1);
                             u32 t18 = T18 + G3 - W2;
 
-                            if ((t18 & KM4) == 0u) {
-                                u32 pack3 = lite ? (u32)ht_lite[t18 >> KB4] : ht_dense[t18 >> KB4];
+                            if ((t18 & KM) == 0u) {
+                                u32 pack3 = (lite == 1) ? (u32)ht_lite[t18 >> KB] : ht_dense[t18 >> KB];
                                 for (u32 p3 = pack3; p3 != 0u; p3 >>= 16) {
                                     u32 ulo3 = p3 & 0xffffu;
+                                    if (lite == 2) {
+                                        // Pass 2 Upgrade: Mod-4 Bijective Pre-Filter (Theorem 1.1)
+                                        if ((((ulo3 + G3) ^ F_target) & M & 3u) != 0u) continue;
+                                    }
                                     if ((((ulo3 + G3) ^ F_target) & M & 0xffffu) == 0u) {
                                         u32 W3 = rec_u_z(ulo3, ulo3 + t18), a4 = W3 + G3;
                                         if (((a4 ^ F_target) & M) == 0u) {
@@ -412,6 +449,7 @@ static void *chain_worker_kb4(void *arg) {
                 }
             }
         }
+        curr_slot ^= 1;
         #undef VROTR_NEON
         #undef VS0_NEON
         #undef VS1_NEON
@@ -474,12 +512,202 @@ static void *sha19_neon_ref_worker(void *arg) {
     return NULL;
 }
 
+// Vectorized 4-wide Hensel step mod (1 << (k+1))
+static inline uint32x4_t hensel_step_4wide(
+    uint32x4_t v_cand, uint32x4_t v_r_base0, uint32x4_t v_a12_xor_a11,
+    uint32x4_t v_e14_a11_base, uint32x4_t v_e13_lo10, uint32x4_t v_E15,
+    uint32x4_t v_C_E12_base, uint32x4_t v_C_a8_base, uint32x4_t v_a11, uint32x4_t v_mk)
+{
+    uint32x4_t v_r0 = vandq_u32(vaddq_u32(v_r_base0, vandq_u32(v_cand, v_a12_xor_a11)), v_mk);
+    uint32x4_t v_e140 = vandq_u32(vaddq_u32(v_e14_a11_base, v_cand), v_mk);
+    uint32x4_t v_ch15 = vandq_u32(vbslq_u32(v_E15, v_e140, v_e13_lo10), v_mk);
+    uint32x4_t v_maj = vandq_u32(vbslq_u32(veorq_u32(v_a11, v_cand), v_r0, v_a11), v_mk);
+    uint32x4_t v_lhs0 = vandq_u32(vaddq_u32(vsubq_u32(v_C_E12_base, v_ch15), vaddq_u32(v_C_a8_base, v_maj)), v_mk);
+    uint32x4_t v_diff = vandq_u32(veorq_u32(v_lhs0, v_r0), v_mk);
+    return vceqzq_u32(v_diff);
+}
+
+// Theory 41: Combined 4-wide NEON Carry-Sudoku Hensel Lifting + Full-Word D Liberation
+static void *ctx_worker_carbon_record(void *arg) {
+    ctx_worker_t *cw = (ctx_worker_t *)arg;
+    u32 A[R+OFF+2] = {0};
+    for (int i = 0; i < 8; i++) A[i] = WIV_GLOBAL[i];
+    u32 st[8], aw[8];
+    for (int i = 0; i < 8; i++) st[i] = cw->dig[i] - IV[i];
+    window_from_state(st, aw);
+    for (int i = 0; i < 8; i++) A[(R-7+i)+OFF] = aw[i];
+
+    u32 a12 = A[12+OFF], a13 = A[13+OFF], a14 = A[14+OFF], a15 = A[15+OFF];
+    u32 E16 = E_arr(A, 16);
+    u32 e15_base = a15 - S0(a14) - MAJ(a14, a13, a12);
+    u32 a9_const_base = S0(a12) - a13;
+    u32 C_E11_base = e15_base - K[14];
+
+    static const uint32_t s_deltas[5][4] = {
+        {0, 1, 2, 3}, {0, 4, 8, 12}, {0, 16, 32, 48}, {0, 64, 128, 192}, {0, 256, 512, 768}
+    };
+    static const u32 s_mks[5] = {3, 15, 63, 255, 1023};
+    uint32x4_t v_deltas[5], v_mks[5];
+    for (int s = 0; s < 5; s++) {
+        v_deltas[s] = vld1q_u32(s_deltas[s]);
+        v_mks[s]    = vdupq_n_u32(s_mks[s]);
+    }
+
+    u64 rng = ((u64)(cw->tid + 1) << 56) ^ (cw->attempt * 0xD1B54A32D192ED03ULL) ^ 0x123456789ABCDEF0ULL;
+    u64 local_tried = 0;
+
+    while (!atomic_load_explicit(cw->found, memory_order_relaxed)) {
+        rng += 0x9E3779B97F4A7C15ULL;
+        u64 z = (rng ^ (rng >> 30)) * 0xBF58476D1CE4E5B9ULL;
+        u32 a11_lo13 = ((u32)z) & 0x1fffu;
+        u32 E13_seed = (u32)(z >> 32);
+
+        u32 a11 = a11_lo13 | (a12 & 0xffc00000u) | ((~a12) & 0x003fe000u);
+        u32 E15 = e15_base + a11;
+        u32 s1_E15 = S1(E15);
+        u32 s0_a11 = S0(a11);
+        u32 e14_a11_base = a14 - S0(a13) - MAJ(a13, a12, a11);
+        u32 C_E12_base   = E16 - a12 - s1_E15 - K[15] - (u32)PADLEN_BITS;
+        u32 C_a8_base    = s0_a11 - a12;
+
+        u32 e13_lo10    = (E13_seed & 0x300u) | 0xffu;
+        u32 r_base0     = (e13_lo10 + a9_const_base + (a12 & a11)) & 0x3ffu;
+        u32 a12_xor_a11 = (a12 ^ a11) & 0x3ffu;
+
+        uint32x4_t v_r_base0_vec     = vdupq_n_u32(r_base0);
+        uint32x4_t v_a12_xor_a11_vec = vdupq_n_u32(a12_xor_a11);
+        uint32x4_t v_e14_a11_base_vec = vdupq_n_u32(e14_a11_base);
+        uint32x4_t v_e13_lo10_vec    = vdupq_n_u32(e13_lo10);
+        uint32x4_t v_E15_vec         = vdupq_n_u32(E15);
+        uint32x4_t v_C_E12_base_vec  = vdupq_n_u32(C_E12_base);
+        uint32x4_t v_C_a8_base_vec   = vdupq_n_u32(C_a8_base);
+        uint32x4_t v_a11_vec         = vdupq_n_u32(a11);
+
+        u32 cur[32], nxt[32];
+        int n_cur = 0;
+
+        // Step 0: directly test {0, 1, 2, 3}
+        {
+            uint32x4_t v_cand0 = v_deltas[0];
+            uint32x4_t v_match0 = hensel_step_4wide(
+                v_cand0, v_r_base0_vec, v_a12_xor_a11_vec, v_e14_a11_base_vec,
+                v_e13_lo10_vec, v_E15_vec, v_C_E12_base_vec, v_C_a8_base_vec,
+                v_a11_vec, v_mks[0]);
+            if (!vmaxvq_u32(v_match0)) continue;
+            u32 m0 = vgetq_lane_u32(v_match0, 0);
+            u32 m1 = vgetq_lane_u32(v_match0, 1);
+            u32 m2 = vgetq_lane_u32(v_match0, 2);
+            u32 m3 = vgetq_lane_u32(v_match0, 3);
+            if (m0) cur[n_cur++] = 0;
+            if (m1) cur[n_cur++] = 1;
+            if (m2) cur[n_cur++] = 2;
+            if (m3) cur[n_cur++] = 3;
+        }
+
+        // Steps 1..4: 2-bit extensions
+        for (int step = 1; step < 5 && n_cur > 0; step++) {
+            uint32x4_t v_mk = v_mks[step];
+            uint32x4_t v_delta = v_deltas[step];
+            int n_nxt = 0;
+            for (int j = 0; j < n_cur; j++) {
+                uint32x4_t v_cand = vaddq_u32(vdupq_n_u32(cur[j]), v_delta);
+                uint32x4_t v_match = hensel_step_4wide(
+                    v_cand, v_r_base0_vec, v_a12_xor_a11_vec, v_e14_a11_base_vec,
+                    v_e13_lo10_vec, v_E15_vec, v_C_E12_base_vec, v_C_a8_base_vec,
+                    v_a11_vec, v_mk);
+
+                if (!vmaxvq_u32(v_match)) continue;
+                u32 cand_arr[4], match_arr[4];
+                vst1q_u32(cand_arr, v_cand);
+                vst1q_u32(match_arr, v_match);
+                if (match_arr[0] && n_nxt < 32) nxt[n_nxt++] = cand_arr[0];
+                if (match_arr[1] && n_nxt < 32) nxt[n_nxt++] = cand_arr[1];
+                if (match_arr[2] && n_nxt < 32) nxt[n_nxt++] = cand_arr[2];
+                if (match_arr[3] && n_nxt < 32) nxt[n_nxt++] = cand_arr[3];
+            }
+            n_cur = n_nxt;
+            for (int j = 0; j < n_cur; j++) cur[j] = nxt[j];
+        }
+        if (!n_cur) continue;
+
+        u32 e13_mid3        = ((E13_seed >> 2) & 7u) << 19;
+        u32 target_a9_19_31 = (((~(E15 ^ a11)) & 0xffc00000u) | e13_mid3);
+        u32 e13_19_31       = (target_a9_19_31 - (a9_const_base + (a12 & 0xffc00000u))) & 0xfff80000u;
+
+        for (int r_idx = 0; r_idx < n_cur; r_idx++) {
+            u32 a10_lo10  = cur[r_idx];
+            u32 r10       = (r_base0 + (a10_lo10 & a12_xor_a11)) & 0x3ffu;
+            u32 E12_lo8   = (C_E12_base - (~E15) - (E15 & ((e14_a11_base + a10_lo10) & 0xffu))) & 0xffu;
+            u32 E13_0     = e13_19_31 | ((E13_seed & 1u) << 10) | e13_lo10;
+            u32 req_s1_lo = (e14_a11_base + 1u - E12_lo8 - K[13] - 0x80u) & 0xffu;
+            u32 d_s1      = req_s1_lo ^ (S1(E13_0) & 0xffu);
+            u32 x_s1      = d_s1 ^ ((d_s1 & 7u) << 5);
+            u32 E13       = E13_0 | (x_s1 << 11);
+            u32 C_E12_folded = C_E12_base - ((~E15) & E13);
+            u32 req_s0_a9 = (a10_lo10 + 1u) & 0x3ffu;
+
+            for (u32 dz_a = 0; dz_a < 8u; dz_a++) {
+                u32 a10_lo13   = a10_lo10 | (dz_a << 10);
+                u32 a9_0       = E13 + a9_const_base + MAJ(a12, a11, a10_lo13);
+                u32 want_a9_13 = (req_s0_a9 ^ (a9_0 >> 2) ^ (a9_0 >> 22)) & 0x1ffu;
+                u32 x9         = (want_a9_13 - (a9_0 >> 13)) & 0x1ffu;
+                u32 a9         = a9_0 + (x9 << 13);
+                if ((S0(a9) & 0x3ffu) != req_s0_a9) continue;
+                if (((E15 ^ a11 ^ a9) >> 22) != 0x3ffu) continue;
+
+                local_tried++;
+                u32 a11_xor_a9 = a11 ^ a9;
+                u32 C_a8_total = C_E12_folded + C_a8_base + (a11 & a9);
+                u32 a10_lo22   = a10_lo13 | (x9 << 13);
+                u32 E14        = e14_a11_base + a10_lo22;
+                u32 bt         = C_a8_total + (a10_lo22 & a11_xor_a9);
+                u32 a8         = bt - (E15 & E14);
+
+                u32 req_lo9    = ((r10 + 1u) ^ (a8 >> 2) ^ (a8 >> 13)) & 0x1ffu;
+                u32 req_b9     = (((r10 + 1u) >> 9) ^ ((a8 >> 11) & 1u) ^ (req_lo9 & 1u)) & 1u;
+                u32 req_sh     = (req_lo9 | (req_b9 << 9)) << 22;
+
+                u32 E14_init = E14;
+                for (int k = 22; k <= 31; k++) {
+                    u32 bk = (a8 ^ req_sh) & (1u << k);
+                    E14 += bk;
+                    bt  += bk & a11_xor_a9;
+                    a8   = bt - (E15 & E14);
+                }
+                u32 a10 = a10_lo22 | (E14 - E14_init);
+                u32 E12 = C_E12_folded - (E15 & E14);
+                u32 E11 = C_E11_base - S1(E14) - CH(E14, E13, E12);
+                u32 a7  = E11 - a11 + S0(a10) + MAJ(a10, a9, a8);
+                u32 a6  = 0xffffffffu + S0(a9) - a10 + MAJ(a9, a8, a7);
+                u32 a5  = 0xffffffffu - a9 + S0(a8) + MAJ(a8, a7, a6);
+                u32 D   = a5 ^ a6;
+                int pD  = popc(D);
+
+                // Theory 41: Full-word D liberation popc(D) <= 2
+                int ok_d = (pD <= 2);
+                if (ok_d) {
+                    int expected = 0;
+                    if (atomic_compare_exchange_strong(cw->found, &expected, 1)) {
+                        *cw->out_a9  = a9;
+                        *cw->out_a10 = a10;
+                        *cw->out_a11 = a11;
+                    }
+                    goto done;
+                }
+            }
+        }
+    }
+done:
+    atomic_fetch_add(cw->total_tried, local_tried);
+    return NULL;
+}
+
 static atomic_int g_kb4_mode = 0;
 
 // Unified 8-thread pool (7 background workers + main = 8 threads total, zero oversubscription):
 //   mode 1: build_kb4_worker
 //   mode 2: chain_worker_kb4
-//   mode 3: ctx_worker_carbon
+//   mode 3: ctx_worker_carbon (or ctx_worker_carbon_record if g_use_lite == 3)
 static void *pool_kb4_worker(void *arg) {
     int tid = (int)(intptr_t)arg;
     u32 last_gen = 0, spins = 0;
@@ -490,7 +718,10 @@ static void *pool_kb4_worker(void *arg) {
         u32 m = cg & 3u;
         if (m == 1u) build_kb4_worker(&g_pool_bld[tid]);
         else if (m == 2u) chain_worker_kb4(&g_pool_ch[tid]);
-        else if (m == 3u) ctx_worker_carbon(&g_pool_ctx[tid]);
+        else if (m == 3u) {
+            if (g_use_lite == 3) ctx_worker_carbon_record(&g_pool_ctx[tid]);
+            else                 ctx_worker_carbon(&g_pool_ctx[tid]);
+        }
         atomic_fetch_add_explicit(&g_pool_done, 1u, memory_order_release);
     }
     return NULL;
@@ -514,7 +745,8 @@ static u64 find_ctx_unified(const u32 dig[8], int kmax, u64 attempt, SolverTrace
     atomic_store_explicit(&g_pool_done, 0u, memory_order_relaxed);
     u32 next_g = ((atomic_load(&g_kb4_mode) >> 2) + 1u) << 2;
     atomic_store_explicit(&g_kb4_mode, (int)(next_g | 3u), memory_order_release);
-    ctx_worker_carbon(&g_pool_ctx[0]);
+    if (g_use_lite == 3) ctx_worker_carbon_record(&g_pool_ctx[0]);
+    else                 ctx_worker_carbon(&g_pool_ctx[0]);
     while (atomic_load_explicit(&g_pool_done, memory_order_acquire) < 7u) __builtin_arm_yield();
     eval_op1_to_op3(dig, a9, a10, a11, tr, A);
     return (u64)total_tried;
@@ -523,8 +755,8 @@ static u64 find_ctx_unified(const u32 dig[8], int kmax, u64 attempt, SolverTrace
 static int run_suite(const char *name, int lite, double rate_scalar, double rate_neon) {
     g_use_lite = lite;
     double t0 = now_sec();
-    if (!lite) ht_dense = calloc(BUCKETS4, sizeof(u32));
-    else       ht_lite  = calloc(BUCKETS4, sizeof(u16));
+    if (lite != 1) ht_dense = calloc(BUCKETS, sizeof(u32));
+    else           ht_lite  = calloc(BUCKETS, sizeof(u16));
 
     for (int t = 0; t < 8; t++) { g_pool_bld[t].tid = t; g_pool_bld[t].nthreads = 8; }
     atomic_store_explicit(&g_pool_done, 0u, memory_order_relaxed);
@@ -606,14 +838,15 @@ static int run_suite(const char *name, int lite, double rate_scalar, double rate
     double log2_alg    = log2((double)(tot50_op2 + tot50_chains) / 50.0);
 
     printf("  [%-24s] RAM=%4d MB | Init=%.3fs (0 CAS) | 10-Tgt=%.2f ms | 50-Tgt=%.2f ms | Op2=%5llu | Chains=%7llu | log2(SHA19-scalar)=%.2f | log2(SHA19-NEON)=%.2f | log2(alg)=%.2f | %s\n",
-           name, lite ? 512 : 1024, t_init, (dt10 / 10.0) * 1000.0, mean50_s * 1000.0,
+           name, (int)((lite == 1) ? (BUCKETS * sizeof(u16) >> 20) : (BUCKETS * sizeof(u32) >> 20)), t_init, (dt10 / 10.0) * 1000.0, mean50_s * 1000.0,
            (unsigned long long)(tot50_op2 / 50), (unsigned long long)(tot50_chains / 50),
            log2_scalar, log2_neon, log2_alg,
            all_ok ? "60/60 OK" : "FAIL");
-    if (!lite) free(ht_dense); else free(ht_lite);
+    if (lite != 1) free(ht_dense); else free(ht_lite);
     return all_ok;
 }
 
+#ifndef BENCH_MODES_NO_MAIN
 int main(void) {
     init_iv_constants();
 
@@ -638,8 +871,11 @@ int main(void) {
     printf("========================================================================================================================================================================\n");
 
     init_kb4_pool();
-    int ok1 = run_suite("Carbon-Dense (KB=4 u32)", 0, rate_scalar, rate_neon);
-    int ok2 = run_suite("Carbon-Lite  (KB=4 u16)", 1, rate_scalar, rate_neon);
+    int ok1 = run_suite("Carbon-Dense Baseline", 0, rate_scalar, rate_neon);
+    int ok2 = run_suite("Carbon-Lite (512 MB)", 1, rate_scalar, rate_neon);
+    int ok3 = run_suite("Carbon Pass 2 Upgraded", 2, rate_scalar, rate_neon);
+    int ok4 = run_suite("Carbon Pass 3 Record", 3, rate_scalar, rate_neon);
     printf("========================================================================================================================================================================\n");
-    return (ok1 && ok2) ? 0 : 1;
+    return (ok1 && ok2 && ok3 && ok4) ? 0 : 1;
 }
+#endif

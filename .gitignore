@@ -2,6 +2,9 @@
 exp_r19_distant_theories
 exp_r19_carbon_lab
 bench_carbon_modes
+bench_r19_record_2ms
+test_r19_basin_algebraic_engine
+test_r20_basin_algebraic_engine
 exp_r19_metal_gpu
 symbolic_arx_f2_markov
 exp_r20_distant_theories
